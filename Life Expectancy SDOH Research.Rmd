@@ -1,0 +1,137 @@
+---
+title: "Life Expectancy & SDOH"
+author: "Bertram Melix"
+date: "6/03/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Library Packages Required for Analysis
+```{r}
+library("rgeos")
+library("rgdal")
+library("spdep")
+library("maptools")
+library("MASS")
+library("robust")
+library("faraway")
+library("spatialreg")
+library("car")
+```
+
+
+## Read shapefile with rgdal
+```{r}
+FlShp <- rgdal::readOGR(dsn = "C:/Users/Bertram/Desktop/LifeExpectancy/Shapefile", layer = "LESDOH")
+```
+
+
+## List column headers
+```{r}
+names(FlShp)
+```
+
+
+## Create queen neighbor file
+```{r}
+LEQueen<- poly2nb(FlShp,queen=TRUE)
+```
+
+
+## Convert queen neighbor to list
+```{r}
+LEQueen1<-nb2listw(LEQueen, zero.policy = TRUE)
+```
+
+
+## Test for Multicollinearity with VIF function
+```{r}
+TractsVIF <- rgdal::readOGR(dsn = "C:/Users/Bertram/Desktop/LifeExpectancy/Shapefile", layer = "LESDOHVIF")
+names(TractsVIF) 
+LEVIF <- data.frame(TractsVIF[, c(2,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34)])
+names(LEVIF)
+VIFModel<- lm(LE_Estimat~., LEVIF)
+summary(VIFModel)
+faraway::vif(VIFModel)
+```
+
+
+## Formula
+```{r}
+LEform1<- formula(LE_Estimat~QBLACK+QNATAM+QASIAN+QHISP+QAGEDEP+PPUNIT+QRENTER+QNRRES+QFEMALE+QFHH+PERCAP+QESL+QCVLUN+QPOVTY+QMOHO+QED12LES+QFEMLBR+QEXTRCT+QSERV+QNOAUTO+QFAM+QRICH200K+QSSBEN+QURBAN+POPDENS+QUNINS)
+```
+
+
+## OLS Model
+```{r}
+LEFitlm<- lm(LEform1, data= FlShp)
+summary(LEFitlm)
+LEResFitlm<- resid(LEFitlm)
+stepAIC(LEFitlm, direction="backward")
+```
+
+
+## QQPlot
+```{r}
+car::qqPlot(resid(LEFitlm))
+pred_quants <- qnorm((rank(resid(LEFitlm)) - 0.5) / length(resid(LEFitlm)))
+points(resid(LEFitlm) ~ pred_quants, pch = 1, col = "red")
+```
+
+
+## Fitted values vs Residuals, QQPlot 
+```{r}
+plot(LEFitlm)
+```
+
+
+## Shapiro Wilkes Test
+```{r}
+shapiro.test(resid(LEFitlm))
+```
+
+
+## Lagrange Multiplier Test
+```{r}
+lm.LMtests(LEFitlm,LEQueen1,zero.policy = TRUE, test = c("LMerr","RLMerr","LMlag","RLMlag"))
+```
+
+
+## Moran's I test on residuals from Linear Regression
+```{r}
+moran.test(LEFitlm$residuals, listw = LEQueen1, zero.policy = TRUE)
+```
+
+
+## Spatial Durbin Error Model (SDEM)
+```{r}
+LEFitErrorM<- errorsarlm(LEform1, data=SE, listw=LEQueen1, etype = "emixed", tol.solve=1.0e-30, zero.policy = TRUE)
+summary(LEFitErrorM)
+
+```
+
+
+## Moran's I on residuals from SDEM
+```{r}
+moran.test(LEFitErrorM$residuals, LEQueen1, zero.policy = TRUE)
+```
+
+
+## Spatial Breusch-Pagan test for Heterskadisticity
+```{r}
+bptest.sarlm(LEFitErrorM, studentize = TRUE)
+```
+
+
+## Psuedo R^2
+```{r}
+1-(LEFitErrorM$SSE)/(var(FlShp$LE_Estimat)*(length(FlShp$LE_Estimat)-1))
+```
+
+
+## AIC
+```{r}
+AIC(LEFitlm,LEFitErrorM)
+```
+
